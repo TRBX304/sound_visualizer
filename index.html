@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>サウンドビジュアライザー (背景映像版)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            overflow: hidden;
+            background: #0a0e27;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        #videoBackground {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            min-width: 100%;
+            min-height: 100%;
+            width: auto;
+            height: auto;
+            transform: translate(-50%, -50%);
+            z-index: 1;
+            opacity: 0.4;
+            filter: blur(0px) brightness(1.0);
+        }
+        
+        canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            z-index: 2;
+        }
+        
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 15px;
+        }
+        
+        .start-btn {
+            padding: 15px 40px;
+            font-size: 18px;
+            background: rgba(100, 200, 255, 0.2);
+            backdrop-filter: blur(10px);
+            border: 2px solid rgba(100, 200, 255, 0.4);
+            border-radius: 50px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: bold;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        .start-btn:hover {
+            background: rgba(100, 200, 255, 0.3);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(100, 200, 255, 0.3);
+        }
+        
+        .start-btn:active {
+            transform: translateY(0);
+        }
+        
+        .start-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .info {
+            margin-top: 15px;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 14px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px 20px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+        }
+    </style>
+</head>
+<body>
+    <video id="videoBackground" autoplay muted></video>
+    <canvas id="canvas"></canvas>
+    
+    <div class="controls">
+        <div class="button-group">
+            <button class="start-btn" id="audioOnlyBtn">音声のみ</button>
+            <button class="start-btn" id="videoBtn">映像付き</button>
+        </div>
+        <div class="info" id="info">モードを選択してください</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('videoBackground');
+        const audioOnlyBtn = document.getElementById('audioOnlyBtn');
+        const videoBtn = document.getElementById('videoBtn');
+        const info = document.getElementById('info');
+        
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let bufferLength;
+        let isRunning = false;
+        let showVideo = false;
+
+        // キャンバスサイズの設定
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // オーディオの初期化
+        async function initAudio(withVideo = true) {
+            try {
+                let stream;
+                
+                if (withVideo) {
+                    // 映像付き: 画面共有経由でシステムオーディオをキャプチャ
+                    stream = await navigator.mediaDevices.getDisplayMedia({ 
+                        video: true,
+                        audio: {
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl: false
+                        }
+                    });
+                    
+                    // 映像を背景videoに表示
+                    video.srcObject = stream;
+                    video.play();
+                    showVideo = true;
+                } else {
+                    // 音声のみ: 画面共有で音声のみ取得
+                    stream = await navigator.mediaDevices.getDisplayMedia({ 
+                        video: true,
+                        audio: {
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl: false
+                        }
+                    });
+                    
+                    // 映像トラックは停止して非表示
+                    const videoTrack = stream.getVideoTracks()[0];
+                    if (videoTrack) {
+                        videoTrack.stop();
+                    }
+                    video.style.display = 'none';
+                    showVideo = false;
+                }
+                
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                const source = audioContext.createMediaStreamSource(stream);
+                
+                analyser.fftSize = 1024;
+                analyser.smoothingTimeConstant = 0.6; // スムージングを減らしてキレを出す（0-1、デフォルト0.8）
+                bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+                
+                source.connect(analyser);
+                
+                info.textContent = '音楽を再生してください！';
+                // 3秒後にコントロールを非表示
+                setTimeout(() => {
+                    document.querySelector('.controls').style.opacity = '0';
+                    document.querySelector('.controls').style.transition = 'opacity 1s ease';
+                    setTimeout(() => {
+                        document.querySelector('.controls').style.display = 'none';
+                    }, 1000);
+                }, 3000);
+                isRunning = true;
+                animate();
+                
+            } catch (err) {
+                info.textContent = '音声共有がキャンセルされました。「システム音声を共有」にチェックを入れてください';
+                console.error('Error accessing audio:', err);
+                audioOnlyBtn.disabled = false;
+                videoBtn.disabled = false;
+            }
+        }
+
+        // アニメーション
+        let particles = [];
+        
+        // パーティクルクラス
+        class Particle {
+            constructor() {
+                this.reset();
+            }
+            
+            reset() {
+                this.x = Math.random() * canvas.width;
+                this.y = canvas.height + 20;
+                this.speed = 0.5 + Math.random() * 1.5;
+                this.size = 1 + Math.random() * 2;
+                this.opacity = Math.random() * 0.5;
+            }
+            
+            update() {
+                this.y -= this.speed;
+                if (this.y < -20) {
+                    this.reset();
+                }
+            }
+            
+            draw() {
+                ctx.fillStyle = `rgba(100, 200, 255, ${this.opacity})`;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        // パーティクルを初期化
+        for (let i = 0; i < 50; i++) {
+            particles.push(new Particle());
+        }
+        
+        function animate() {
+            if (!isRunning) return;
+            
+            requestAnimationFrame(animate);
+            
+            analyser.getByteFrequencyData(dataArray);
+            
+            // キャンバスをクリア（背景映像が見える）
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // パーティクルを描画
+            particles.forEach(p => {
+                p.update();
+                p.draw();
+            });
+            
+            // バーの設定
+            const barCount = bufferLength;
+            const totalWidth = canvas.width * 1.3; // 全体の幅を130%に拡張
+            const barWidth = totalWidth / barCount;
+            const offsetX = -canvas.width * 0.15; // 左に15%オフセット（右側にシフト）
+            const centerY = canvas.height / 2;
+            const maxBarHeight = canvas.height / 2.2;
+            
+            // 平均音量を計算
+            const avgVolume = dataArray.reduce((a, b) => a + b) / dataArray.length / 255;
+            
+            // 帯状の縦バーを描画
+            for (let i = 0; i < barCount; i++) {
+                const value = dataArray[i];
+                
+                // 2乗スケールでメリハリを出す
+                const normalizedValue = value / 255;
+                const percent = normalizedValue * normalizedValue; // x^2
+                const barHeight = percent * maxBarHeight;
+                
+                const x = i * barWidth + offsetX;
+                
+                // 色の計算（周波数に応じて変化）
+                const hue = 180 + (i / barCount) * 80; // 青〜シアン〜緑系
+                const lightness = 40 + percent * 40;
+                const alpha = 0.6 + percent * 0.4;
+                
+                // グロー効果
+                if (percent > 0.3) {
+                    ctx.shadowBlur = 20 * percent;
+                    ctx.shadowColor = `hsla(${hue}, 100%, 60%, 0.8)`;
+                }
+                
+                // バーの描画（上下対称）
+                const barGradient = ctx.createLinearGradient(x, centerY - barHeight, x, centerY + barHeight);
+                barGradient.addColorStop(0, `hsla(${hue}, 90%, ${lightness + 25}%, ${alpha})`);
+                barGradient.addColorStop(0.5, `hsla(${hue}, 70%, ${lightness}%, ${alpha * 0.7})`);
+                barGradient.addColorStop(1, `hsla(${hue}, 90%, ${lightness + 25}%, ${alpha})`);
+                
+                ctx.fillStyle = barGradient;
+                ctx.fillRect(x, centerY - barHeight, barWidth - 0.5, barHeight * 2);
+                
+                // 光の効果（高音量時）
+                if (percent > 0.5) {
+                    ctx.fillStyle = `rgba(255, 255, 255, ${(percent - 0.5) * 0.4})`;
+                    const glowHeight = barHeight * 0.3;
+                    ctx.fillRect(x, centerY - glowHeight, barWidth - 0.5, glowHeight * 2);
+                }
+                
+                ctx.shadowBlur = 0;
+            }
+            
+            // 波エフェクト（音量に応じて）
+            if (avgVolume > 0.1) {
+                ctx.strokeStyle = `rgba(100, 200, 255, ${avgVolume * 0.3})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                
+                for (let x = 0; x < canvas.width; x += 5) {
+                    const waveOffset = Math.sin(x * 0.01 + Date.now() * 0.002) * 30 * avgVolume;
+                    const y = centerY + waveOffset;
+                    if (x === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+                ctx.stroke();
+            }
+            
+            // 中央のライン（うっすら）
+            ctx.strokeStyle = 'rgba(100, 200, 255, 0.15)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, centerY);
+            ctx.lineTo(canvas.width, centerY);
+            ctx.stroke();
+        }
+
+        // ボタンのイベント
+        audioOnlyBtn.addEventListener('click', async () => {
+            if (!isRunning) {
+                audioOnlyBtn.disabled = true;
+                videoBtn.disabled = true;
+                await initAudio(false); // 音声のみ
+            }
+        });
+        
+        videoBtn.addEventListener('click', async () => {
+            if (!isRunning) {
+                audioOnlyBtn.disabled = true;
+                videoBtn.disabled = true;
+                await initAudio(true); // 映像付き
+            }
+        });
+    </script>
+</body>
+</html>
