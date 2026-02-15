@@ -52,7 +52,7 @@ async function startVisualizer() {
         analyser = audioContext.createAnalyser();
         const source = audioContext.createMediaStreamSource(stream);
         
-        analyser.fftSize = 2048;
+        analyser.fftSize = 4096;
         analyser.smoothingTimeConstant = 0.6;
         bufferLength = analyser.frequencyBinCount;
         dataArray = new Uint8Array(bufferLength);
@@ -181,7 +181,7 @@ function animate() {
     });
     
     // バーの設定
-    const samplesPerBar = 4;
+    const samplesPerBar = 8;
     const displayBarCount = bufferLength / samplesPerBar;
     const totalWidth = canvas.width * 1.3;
     const barWidth = totalWidth / displayBarCount;
@@ -194,13 +194,14 @@ function animate() {
     
     // 帯状の縦バーを描画
     for (let i = 0; i < displayBarCount; i++) {
-        // samplesPerBar本分を2乗してから平均
-        let sumSquared = 0;
+    // samplesPerBar本分の最大値を取る
+        let maxValue = 0;
         for (let j = 0; j < samplesPerBar; j++) {
             const normalized = dataArray[i * samplesPerBar + j] / 255;
-            sumSquared += normalized * normalized; // 先に2乗
-        }
-        const percent = Math.min(1.0, sumSquared / samplesPerBar * 1.5);
+            const squared = normalized * normalized;
+            maxValue = Math.max(maxValue, squared);
+    }
+        const percent = Math.min(1.0, maxValue * 1.5);
         const barHeight = percent * maxBarHeight;
         
         const x = i * barWidth + offsetX;
